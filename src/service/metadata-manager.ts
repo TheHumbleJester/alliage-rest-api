@@ -1,5 +1,7 @@
 import { parse } from "comment-parser";
 import path from "path";
+import fs from "fs/promises";
+import { pathToRegexp } from "path-to-regexp";
 import {
   ts,
   ClassDeclaration,
@@ -13,35 +15,103 @@ import {
 } from "ts-morph";
 import { convertTypeToJsonSchema } from "../utils/json-schema";
 
+
+export type ControllerMetadata = Exclude<
+  ReturnType<typeof getControllerMetadata>,
+  undefined
+>;
+
+export type ActionMetadata = Omit<ControllerMetadata["actions"][0], "routes"> & {
+  controllerName?: string;
+}
+export interface Metadata {
+  [method: string]: {
+    pattern: RegExp;
+    path: string;
+    actionMetadata: ActionMetadata;
+  }[];
+}
 export class MetadataManager {
+  private metadata?: Metadata;
+
   constructor(
     private env: string,
     private sources: string[],
     private metadataPath: string,
-    private disableAutomaticGenerationOnDev: boolean
+    private disableMetadataGeneration: boolean
   ) {}
 
+  /**
+   * Loads metadata in memory by reading the file located
+   * at `metadataPath`
+   */
   async loadMetadata() {
     /**
      * To avoid the developer having to do it manually while developping
      * we trigger the generation of the metadata before loading them
      */
-    if (this.env === "development" && !this.disableAutomaticGenerationOnDev) {
-      this.generateMetadata();
+    if (this.env === "development" && !this.disableMetadataGeneration) {
+      await this.generateMetadata();
+      return ;
     }
+    this.metadata = JSON.parse(await fs.readFile(this.metadataPath, { encoding: 'utf-8' }));
   }
 
-  generateMetadata() {
+  /**
+   * Generates metadata from typescript files included in
+   * `sources` and writes them in the file located at
+   * `metadataPath`
+   */
+  async generateMetadata() {
     const project = new Project({
       tsConfigFilePath: path.resolve("./tsconfig.json"),
     });
 
     const files = project.getSourceFiles(this.sources);
-    const metadata = files.map((file) => getControllerMetadata(file));
-    
+    this.metadata = files.reduce((m: Metadata, file) => {
+      const cm = getControllerMetadata(file);
+      if (!cm) {
+        return m;
+      }
+      cm.actions.forEach(({ routes, ...action }) => {
+        routes.forEach((route) => {
+          m[route.method] = m[route.method] ?? [];
+          m[route.method].push({
+            pattern: pathToRegexp(route.path),
+            path: route.path,
+            actionMetadata: {
+              controllerName: cm.name,
+              ...action,
+            },
+          });
+        });
+      });
+      return m;
+    }, {});
+
+    await fs.writeFile(this.metadataPath, JSON.stringify(this.metadata));
   }
 
-  readMetadata(_method: string, _path: string) {}
+  /**
+   * Finds the metadata corresponding to a given `method`
+   * and a given `path`
+   * @param method HTTP verb
+   * @param path Path of the request
+   */
+  findMetadata(method: string, path: string): ActionMetadata | undefined {
+    return this.metadata?.[method].find(({ pattern }) => pattern.test(path))?.actionMetadata;
+  }
+
+  /**
+   * Returns the controllers metadata
+   * @returns metadata
+   */
+  getMetadata() {
+    if (!this.metadata) {
+      throw new Error('Controllers metadata is not loaded');
+    }
+    return this.metadata;
+  }
 }
 
 function getRootClass(
@@ -181,7 +251,7 @@ function getActionErrorsMetadata(
             description: doc
               ?.flatMap(({ description }) => (description ? [description] : []))
               .join("\n"),
-            code: codeType.getLiteralValue(),
+            code: codeType.getLiteralValue()?.toString() ?? '500',
             payloadType,
           },
         ];

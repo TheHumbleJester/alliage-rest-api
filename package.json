@@ -6,7 +6,35 @@
   "repository": "git@github.com:TheHumbleJester/alliage-rest-api.git",
   "author": "The Humble Jester <the.humble.jester@gmail.com>",
   "license": "MIT",
+  "scripts": {
+    "download-openapi-schema": "sh scripts/download-openapi-schema.sh",
+    "postinstall": "yarn download-openapi-schema"
+  },
+  "alliageManifest": {
+    "type": "module",
+    "dependencies": [
+      "alliage-builder",
+      "alliage-config-loader",
+      "alliage-di",
+      "alliage-lifecycle",
+      "alliage-module-installer",
+      "alliage-webserver"
+    ],
+    "installationProcedures": {
+      "copyFiles": [
+        [
+          "base-files/main-config.yaml",
+          "config/rest-api.yaml"
+        ],
+        [
+          "base-files/openapi-specs-config.yaml",
+          "config/rest-api-openapi-specs.yaml"
+        ]
+      ]
+    }
+  },
   "devDependencies": {
+    "@types/node": "^17.0.0",
     "alliage": "^1.1.0",
     "alliage-builder": "^1.2.0-pre1",
     "alliage-config-loader": "^1.2.0-pre1",
@@ -15,6 +43,7 @@
     "alliage-module-installer": "^1.2.0-pre1",
     "alliage-webserver": "^0.1.0-pre2",
     "json-schema": "^0.4.0",
+    "json-schema-to-ts": "^1.6.4",
     "typescript": "^4.5.3"
   },
   "peerDependencies": {
@@ -27,7 +56,10 @@
     "alliage-webserver": "^0.1.0-pre2"
   },
   "dependencies": {
+    "ajv": "^8.8.2",
+    "ajv-formats": "^2.1.1",
     "comment-parser": "^1.3.0",
+    "path-to-regexp": "^6.2.0",
     "ts-morph": "^13.0.2"
   }
 }

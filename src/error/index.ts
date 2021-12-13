@@ -6,11 +6,17 @@ export class HttpError<C extends number, P> extends Error {
   getData() {
     return {
       code: this.code,
-      payload: this.payload
-    }
+      payload: this.payload,
+    };
   }
 }
 
+/**
+ * Creates an HTTP error meant to be thrown when a specific error occurs
+ * @param code Status code of the error
+ * @param payload Payload that will be returned
+ * @returns
+ */
 export function createHttpError<C extends number, P>(code: C, payload: P) {
-  return new HttpError<C, P>(code, payload)
+  return new HttpError<C, P>(code, payload);
 }

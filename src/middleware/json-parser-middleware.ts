@@ -6,7 +6,7 @@ import { Context } from 'alliage-webserver/middleware/context';
  * Transforms JSON string in the request body in an actual javascript object
  */
 export default class JSONParserMiddleware extends AbstractMiddleware {
-  getRequestPhase: () => REQUEST_PHASE.PRE_CONTROLLER;
+  getRequestPhase = () => REQUEST_PHASE.PRE_CONTROLLER;
 
   async apply(context: Context) {
     const request = context.getRequest();

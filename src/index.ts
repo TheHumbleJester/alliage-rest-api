@@ -1,77 +1,251 @@
-import { parameter } from "alliage-di/dependencies";
+import { ConfigLoadEvent, CONFIG_EVENTS } from "alliage-config-loader/events";
+import { instanceOf, parameter } from "alliage-di/dependencies";
 import { ServiceContainer } from "alliage-di/service-container";
 import { INIT_EVENTS, LifeCycleInitEvent } from "alliage-lifecycle/events";
 import { AbstractLifeCycleAwareModule } from "alliage-lifecycle/module";
 import {
   AdapterPostControllerEvent,
   AdapterPreControllerEvent,
+  AdapterPreRequestEvent,
   ADAPTER_EVENTS,
 } from "alliage-webserver/adapter/events";
+import { AbstractRequest } from "alliage-webserver/http/request";
+import {
+  CONFIG_NAME as MAIN_CONFIG_NAME,
+  schema as mainSchema,
+  Config as MainConfig,
+} from "config/main";
+import {
+  CONFIG_NAME as OPENAPI_SPECS_CONFIG_NAME,
+  schema as openapiSpecsSchema,
+} from "config/openapi-specs";
 import { createHttpError } from "./error";
 import ErrorMiddleware from "./middleware/error-middleware";
 import JSONParserMiddleware from "./middleware/json-parser-middleware";
-import { MetadataManager } from "./service/metadata-manager";
+import { ActionMetadata, MetadataManager } from "./service/metadata-manager";
 import { Validator } from "./service/Validator";
+import { validate } from "alliage-config-loader/validators/json-schema";
+import { HTTP_METHOD } from "alliage-webserver/http";
+import SchemaMiddleware from "middleware/schema-middleware";
+import { EventManager } from "alliage-lifecycle/event-manager";
+import { RestAPIPreValidateResponseEvent, RestAPIInvalidResponseEvent, RestAPIPostValidateResponseEvent, RestAPIPreValidateRequestEvent, RestAPIPostValidateRequestEvent, RestAPIInvalidRequestEvent } from "./events";
 
 export default class AlliageRestAPIModule extends AbstractLifeCycleAwareModule {
   private metadataManager!: MetadataManager;
   private validator!: Validator;
+  private eventManager!: EventManager;
+  private config!: MainConfig;
+
+  private requestMetadataMap = new Map<AbstractRequest, ActionMetadata>();
 
   getEventHandlers() {
     return {
+      [CONFIG_EVENTS.LOAD]: this.handleConfigLoadEvent,
       [INIT_EVENTS.POST_INIT]: this.handlePostInitEvent,
+      [ADAPTER_EVENTS.PRE_REQUEST]: this.handlePreRequest,
       [ADAPTER_EVENTS.POST_CONTROLLER]: this.handlePostController,
       [ADAPTER_EVENTS.PRE_CONTROLLER]: this.handlePreController,
       [ADAPTER_EVENTS.SERVER_STARTED]: this.handleServerStarted,
     };
   }
 
-  handlePostInitEvent = async (event: LifeCycleInitEvent) => {
+  handleConfigLoadEvent = (event: ConfigLoadEvent) => {
+    event
+      .addConfig({
+        fileName: MAIN_CONFIG_NAME,
+        validator: validate(mainSchema),
+      })
+      .addConfig({
+        fileName: OPENAPI_SPECS_CONFIG_NAME,
+        validator: validate(openapiSpecsSchema),
+      });
+  };
+
+  handlePostInitEvent = (event: LifeCycleInitEvent) => {
     const serviceContainer = event.getServiceContainer();
     this.metadataManager = serviceContainer.getService<MetadataManager>(
       "rest_metadata_manager"
     );
     this.validator = serviceContainer.getService<Validator>("rest_validator");
+    this.eventManager =
+      serviceContainer.getService<EventManager>("event_manager");
+    this.config = serviceContainer.getParameter(MAIN_CONFIG_NAME);
   };
 
+  /**
+   * Loads the metadata when the server starts
+   */
   handleServerStarted = async () => {
     await this.metadataManager.loadMetadata();
   };
 
-  handlePreController = (event: AdapterPreControllerEvent) => {
+  /**
+   * Handles CORS preflight requests
+   */
+  handlePreRequest = (event: AdapterPreRequestEvent) => {
     const request = event.getRequest();
-    const errors = this.validator.validateRequest({
-      body: request.getBody(),
-      params: request.getParams(),
-      query: request.getQuery(),
-    });
-    if (errors) {
-      throw createHttpError(400, errors);
+    const response = event.getResponse();
+    const corsConfigs = this.config.allowedOrigins;
+    const reqOrigin = request.getHeader("Origin");
+    if (
+      corsConfigs &&
+      reqOrigin &&
+      request.getMethod() === HTTP_METHOD.OPTIONS &&
+      (request.getHeader("Access-Control-Request-Method") ||
+        request.getHeader("Access-Control-Request-Headers"))
+    ) {
+      const originCorsConfig = corsConfigs.find(
+        ({ origin }) => origin === reqOrigin
+      );
+      if (originCorsConfig) {
+        response.setStatus(204);
+        response.setHeader(
+          "Access-Control-Allow-Origin",
+          originCorsConfig.origin
+        );
+        response.setHeader(
+          "Access-Control-Allow-Headers",
+          originCorsConfig.headers?.join(", ") ?? ""
+        );
+        response.setHeader(
+          "Access-Control-Allow-Methods",
+          originCorsConfig.methods?.join(", ") ?? ""
+        );
+        response.setHeader(
+          "Access-Control-Max-Age",
+          originCorsConfig.maxAge?.toString() ?? ""
+        );
+        response.end();
+      }
     }
   };
 
-  handlePostController(event: AdapterPostControllerEvent) {
-    const returnedValue = event.getReturnedValue();
-    const request = event.getRequest();
+  /**
+   * Handles request validation
+   */
+  handlePreController = (event: AdapterPreControllerEvent) => {
+    if (this.config.validation.requests.enable) {
+      const request = event.getRequest();
+      const metadata = this.getRequestMetadata(request);
 
-    const metadata = this.metadataManager.readMetadata(
+      if (metadata && metadata.validateInput) {
+        const preValidateRequestEvent = new RestAPIPreValidateRequestEvent(metadata, request);
+        this.eventManager.emit(preValidateRequestEvent.getType(), preValidateRequestEvent);
+        const errors = this.validator.validateRequest(metadata, request);
+        if (errors) {
+          const invalidRequestEvent = new RestAPIInvalidRequestEvent(metadata, request, errors);
+          this.eventManager.emit(invalidRequestEvent.getType(), invalidRequestEvent);
+          throw createHttpError(400, invalidRequestEvent.getErrors());
+        }
+        const postValidateRequestEvent = new RestAPIPostValidateRequestEvent(metadata, request);
+        this.eventManager.emit(postValidateRequestEvent.getType(), postValidateRequestEvent);
+      }
+    }
+  };
+
+  /**
+   * Handles response validation + automatic assignation of reponse's body and status code
+   */
+  handlePostController = (event: AdapterPostControllerEvent) => {
+    const request = event.getRequest();
+    const response = event.getResponse();
+    const returnedValue = event.getReturnedValue();
+
+    // We retrieve the metadata previously found
+    const metadata = this.getRequestMetadata(request);
+
+    if (metadata && metadata.validateOutput) {
+      if (this.config.validation.responses.enable) {
+        const preValidateResponseEvent = new RestAPIPreValidateResponseEvent(metadata, response);
+        this.eventManager.emit(preValidateResponseEvent.getType(), preValidateResponseEvent);
+        const errors = this.validator.validateResponse(metadata, response);
+        if (errors) {
+          const { returnErrors } = this.config.validation.responses.errors;
+          const invalidResponseEvent = new RestAPIInvalidResponseEvent(metadata, response, errors);
+          this.eventManager.emit(invalidResponseEvent.getType(), invalidResponseEvent);
+          // @TODO log error
+          if (returnErrors) {
+            throw createHttpError(
+              this.config.validation.responses.errors.statusCode,
+              invalidResponseEvent.getErrors()
+            );
+          }
+        }
+
+        const postValidateResponseEvent = new RestAPIPostValidateResponseEvent(metadata, response);
+        this.eventManager.emit(postValidateResponseEvent.getType(), postValidateResponseEvent);
+      }
+
+      response.setStatus(metadata.defaultStatusCode);
+
+      if (returnedValue) {
+        response.setBody(returnedValue);
+      }
+
+      // We delete the metadata corresponding to
+      // the current request
+      this.clearRequestMetadata(request);
+    }
+  };
+
+  /**
+   * Returns metadata corresponding to the given request and cache it
+   * @param request
+   * @returns
+   */
+  private getRequestMetadata(request: AbstractRequest) {
+    if (!this.requestMetadataMap.has(request)) {
+      return this.requestMetadataMap.get(request)!;
+    }
+    const metadata = this.metadataManager.findMetadata(
       request.getMethod(),
       request.getPath()
     );
-    if (returnedValue) {
-      event.getResponse().setBody(returnedValue);
+
+    if (metadata) {
+      this.requestMetadataMap.set(request, metadata);
     }
+
+    return metadata;
+  }
+
+  /**
+   * Clear metadata corresponding to the given request from the cache
+   * @param request
+   */
+  private clearRequestMetadata(request: AbstractRequest) {
+    this.requestMetadataMap.delete(request);
   }
 
   registerServices(serviceContainer: ServiceContainer) {
-    serviceContainer.registerService("rest_metadata_manager", MetadataManager);
+    serviceContainer.registerService("rest_metadata_manager", MetadataManager, [
+      parameter("environment"),
+      parameter(`${MAIN_CONFIG_NAME}.metadata.sources`),
+      parameter(`${MAIN_CONFIG_NAME}.metadata.path`),
+      parameter(`${MAIN_CONFIG_NAME}.development.disableMetadataGeneration`),
+    ]);
     serviceContainer.registerService("rest_validator", Validator);
     serviceContainer.registerService(
       "rest_json_parser_middleware",
       JSONParserMiddleware
     );
     serviceContainer.registerService("rest_error_middleware", ErrorMiddleware, [
+      instanceOf(EventManager),
       parameter("evironment"),
     ]);
+    serviceContainer.registerService(
+      "rest_json_parser_middleware",
+      JSONParserMiddleware
+    );
+    serviceContainer.registerService(
+      "rest_schema_middleware",
+      SchemaMiddleware,
+      [
+        instanceOf(MetadataManager),
+        parameter(OPENAPI_SPECS_CONFIG_NAME),
+        parameter(`${MAIN_CONFIG_NAME}.schema`),
+        instanceOf(EventManager),
+      ]
+    );
   }
 }
