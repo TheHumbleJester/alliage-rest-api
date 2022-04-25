@@ -2,6 +2,7 @@ import Ajv, { ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import { AbstractRequest } from "alliage-webserver/http/request";
 import { AbstractResponse } from "alliage-webserver/http/response";
+
 import { ActionMetadata } from "./metadata-manager";
 
 interface ActionValidator {
@@ -68,22 +69,22 @@ export class Validator {
     const { request: requestValidator } = this.getActionValidators(metadata);
 
     const errors = [];
-    if (requestValidator.body(request.getBody())) {
+    if (!requestValidator.body(request.getBody())) {
       errors.push({
         source: ERROR_SOURCE.BODY,
         errors: requestValidator.body.errors,
       });
     }
-    if (requestValidator.params(request.getParams())) {
+    if (!requestValidator.params(request.getParams())) {
       errors.push({
         source: ERROR_SOURCE.PARAMS,
         errors: requestValidator.params.errors,
       });
     }
-    if (requestValidator.query(request.getQuery())) {
+    if (!requestValidator.query(request.getQuery())) {
       errors.push({
         source: ERROR_SOURCE.QUERY,
-        errors: requestValidator.params.errors,
+        errors: requestValidator.query.errors,
       });
     }
 

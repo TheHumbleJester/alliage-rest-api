@@ -16,20 +16,25 @@ export default class ErrorMiddleware extends AbstractMiddleware {
   apply(context: Context, error: Error) {
     const request = context.getRequest();
     const response = context.getResponse();
-    
-    const preErrorEvent = new RestAPIPreErrorEvent(request, error,
+
+    const preErrorEvent = new RestAPIPreErrorEvent(
+      request,
+      error,
       error instanceof HttpError ? error.code : 500,
-      error instanceof HttpError ? error.payload : {
-        message: "Internal error",
-        debug:
-          this.env === "development"
-            ? {
-                name: error.name,
-                message: error.message,
-                stack: error.stack,
-              }
-            : undefined,
-      });
+      error instanceof HttpError
+        ? error.payload
+        : {
+            message: "Internal error",
+            debug:
+              this.env === "development"
+                ? {
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack,
+                  }
+                : undefined,
+          }
+    );
     this.eventManager.emit(preErrorEvent.getType(), preErrorEvent);
 
     const code = preErrorEvent.getCode();
@@ -37,8 +42,13 @@ export default class ErrorMiddleware extends AbstractMiddleware {
 
     response.setStatus(code).setBody(body);
     response.end();
-    
-    const postErrorEvent = new RestAPIPostErrorEvent(request, error, code, body);
+
+    const postErrorEvent = new RestAPIPostErrorEvent(
+      request,
+      error,
+      code,
+      body
+    );
     this.eventManager.emit(postErrorEvent.getType(), postErrorEvent);
   }
 }

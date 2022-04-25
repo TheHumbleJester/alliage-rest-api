@@ -5,7 +5,8 @@ if [ ! -f ../src/generated/schemas ]
 then
   mkdir -p ../src/generated/schemas
 fi
-schema=`cat OpenAPI-Specification/schemas/v3.1/schema.json`
-echo "export default $schema as const;" > ../src/generated/schemas/v3.1.ts
+cat OpenAPI-Specification/schemas/v3.0/schema.json | $(npm bin)/json2ts > ../src/generated/schemas/v3.0.d.ts
+printf "export default " > ../src/generated/schemas/v3.0.ts
+cat OpenAPI-Specification/schemas/v3.0/schema.json >> ../src/generated/schemas/v3.0.ts
 cd ..
 rm -rf .tmp-open-api-spec 

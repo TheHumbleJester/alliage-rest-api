@@ -3,7 +3,7 @@ import {
   JSONSchema6Definition,
   JSONSchema6TypeName,
 } from "json-schema";
-import { ts, Type, Symbol } from "ts-morph";
+import { Symbol as TSSymbol, Type, ts } from "ts-morph";
 
 interface JSDocProperties {
   description?: string;
@@ -104,7 +104,7 @@ function convertTupleTypeToJsonSchema(
   };
 }
 
-function extractJSdocProperties(s: Symbol): JSDocProperties {
+function extractJSdocProperties(s: TSSymbol): JSDocProperties {
   const description = s.compilerSymbol
     .getDocumentationComment(undefined)
     .map((c) => c.text)
@@ -159,11 +159,14 @@ function convertObjectTypeToJsonSchema(
       if (jsDocProps.ignore) {
         return acc;
       }
-      const type = property.getDeclarations()[0]?.getType();
+
+      let type = property.getDeclarations()[0]?.getType();
       if (!type) {
         return acc;
       }
-      if (!type.isNullable()) {
+      if (type.isNullable()) {
+        type = type.getNonNullableType();
+      } else {
         required.push(property.getName());
       }
       let schema: JSONSchema6Definition;

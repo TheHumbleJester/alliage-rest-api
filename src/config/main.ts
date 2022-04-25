@@ -6,33 +6,33 @@ export const schema = {
   additionalProperties: false,
   properties: {
     schema: {
-      type: 'object',
+      type: "object",
       properties: {
         enable: {
-          type: 'boolean'
+          type: "boolean",
         },
         path: {
-          type: 'string'
-        }
+          type: "string",
+        },
       },
-      required: ['enable', 'path'],
+      required: ["enable", "path"],
       additionalProperties: false,
     },
     metadata: {
-      type: 'object',
+      type: "object",
       additionalProperties: false,
-      required: ['sources', 'path'],
+      required: ["sources", "path"],
       properties: {
         sources: {
-          type: 'array',
+          type: "array",
           items: {
-            type: 'string'
-          }
+            type: "string",
+          },
         },
         path: {
-          type: 'string'
-        }
-      }
+          type: "string",
+        },
+      },
     },
     allowedOrigins: {
       items: {
@@ -117,4 +117,4 @@ export const schema = {
   type: "object",
 } as const;
 
-export type Config = FromSchema<typeof schema>
+export type Config = FromSchema<typeof schema>;

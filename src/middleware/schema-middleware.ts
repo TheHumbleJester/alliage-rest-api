@@ -1,11 +1,16 @@
 import { REQUEST_PHASE } from "alliage-webserver/adapter";
 import { AbstractMiddleware } from "alliage-webserver/middleware";
 import { Context } from "alliage-webserver/middleware/context";
+import { EventManager } from "alliage-lifecycle/event-manager";
+
+import {
+  RestAPIPostGenerateSchemaEvent,
+  RestAPIPreGenerateSchemaEvent,
+} from "../events";
+
 import { Config as OpenApiSpecs } from "config/openapi-specs";
 import { Config } from "config/main";
 import { MetadataManager } from "service/metadata-manager";
-import { EventManager } from "alliage-lifecycle/event-manager";
-import { RestAPIPostGenerateSchemaEvent, RestAPIPreGenerateSchemaEvent } from "../events";
 
 /**
  * Exposes the OpenAPI schema endpoint
@@ -33,7 +38,9 @@ export default class SchemaMiddleware extends AbstractMiddleware {
       return this.schema;
     }
 
-    const preEvent = new RestAPIPreGenerateSchemaEvent(this.metadataManager.getMetadata());
+    const preEvent = new RestAPIPreGenerateSchemaEvent(
+      this.metadataManager.getMetadata()
+    );
     this.eventManager.emit(preEvent.getType(), preEvent);
 
     const metadata = preEvent.getMetadata();

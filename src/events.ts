@@ -1,10 +1,10 @@
 import { AbstractEvent, AbstractWritableEvent } from "alliage-lifecycle/events";
 import { AbstractRequest } from "alliage-webserver/http/request";
 import { AbstractResponse } from "alliage-webserver/http/response";
-import { ActionMetadata } from "./service/metadata-manager";
-import { ValidationErrors } from "./service/Validator";
-import { Metadata } from './service/metadata-manager';
-import { Config as OpenApiSpecs } from "config/openapi-specs";
+
+import { ActionMetadata, Metadata } from "./service/metadata-manager";
+import { ValidationErrors } from "./service/validator";
+import { Config as OpenApiSpecs } from "./config/openapi-specs";
 
 export enum REST_API_EVENTS {
   PRE_VALIDATE_REQUEST = "@rest-api/REST_API_EVENTS/PRE_VALIDATE_REQUEST",
@@ -177,9 +177,9 @@ interface JSONObject {
   [key: string]: JSONValue;
 }
 
-interface JSONArray extends Array<JSONValue> {}
+type JSONArray = Array<JSONValue>;
 
-export interface RestAPIPreErrorEventPayload extends RestAPIErrorEventPayload {}
+export type RestAPIPreErrorEventPayload = RestAPIErrorEventPayload;
 
 export class RestAPIPreErrorEvent extends AbstractWritableEvent<
   REST_API_EVENTS,
@@ -221,7 +221,7 @@ export class RestAPIPreErrorEvent extends AbstractWritableEvent<
   }
 }
 
-export interface RestAPIPostErrorEventPayload extends RestAPIErrorEventPayload {}
+export type RestAPIPostErrorEventPayload = RestAPIErrorEventPayload;
 
 export class RestAPIPostErrorEvent extends AbstractEvent<
   REST_API_EVENTS,
@@ -272,7 +272,7 @@ export class RestAPIPreGenerateSchemaEvent extends AbstractWritableEvent<
   setMetadata(metadata: Metadata) {
     this.getWritablePayload().metadata = metadata;
     return this;
-  }  
+  }
 }
 
 export interface RestAPIPostGenerateSchemaEventPayload {

@@ -1,32 +1,38 @@
-import { parse } from "comment-parser";
 import path from "path";
 import fs from "fs/promises";
+
+import { parse } from "comment-parser";
 import { pathToRegexp } from "path-to-regexp";
 import {
-  ts,
   ClassDeclaration,
-  LanguageService,
-  Node,
   Decorator,
+  LanguageService,
+  MethodDeclaration,
+  Node,
+  Project,
   SourceFile,
   SyntaxKind,
-  MethodDeclaration,
-  Project,
+  ts,
 } from "ts-morph";
+
 import { convertTypeToJsonSchema } from "../utils/json-schema";
 
+const PATTERN_REGEXP = /^\/(.*)\/([dgimsuy]+)$/;
 
 export type ControllerMetadata = Exclude<
   ReturnType<typeof getControllerMetadata>,
   undefined
 >;
 
-export type ActionMetadata = Omit<ControllerMetadata["actions"][0], "routes"> & {
+export type ActionMetadata = Omit<
+  ControllerMetadata["actions"][0],
+  "routes"
+> & {
   controllerName?: string;
-}
+};
 export interface Metadata {
   [method: string]: {
-    pattern: RegExp;
+    pattern: string;
     path: string;
     actionMetadata: ActionMetadata;
   }[];
@@ -52,9 +58,11 @@ export class MetadataManager {
      */
     if (this.env === "development" && !this.disableMetadataGeneration) {
       await this.generateMetadata();
-      return ;
+      return;
     }
-    this.metadata = JSON.parse(await fs.readFile(this.metadataPath, { encoding: 'utf-8' }));
+    this.metadata = JSON.parse(
+      await fs.readFile(this.metadataPath, { encoding: "utf-8" })
+    );
   }
 
   /**
@@ -77,7 +85,7 @@ export class MetadataManager {
         routes.forEach((route) => {
           m[route.method] = m[route.method] ?? [];
           m[route.method].push({
-            pattern: pathToRegexp(route.path),
+            pattern: pathToRegexp(route.path).toString(),
             path: route.path,
             actionMetadata: {
               controllerName: cm.name,
@@ -99,7 +107,14 @@ export class MetadataManager {
    * @param path Path of the request
    */
   findMetadata(method: string, path: string): ActionMetadata | undefined {
-    return this.metadata?.[method].find(({ pattern }) => pattern.test(path))?.actionMetadata;
+    return this.metadata?.[method.toLowerCase()]?.find((m) => {
+      const match = PATTERN_REGEXP.exec(m.pattern);
+      if (!match) {
+        return false;
+      }
+      const [, pattern, flags] = match;
+      return RegExp(pattern, flags).test(path);
+    })?.actionMetadata;
   }
 
   /**
@@ -108,7 +123,7 @@ export class MetadataManager {
    */
   getMetadata() {
     if (!this.metadata) {
-      throw new Error('Controllers metadata is not loaded');
+      throw new Error("Controllers metadata is not loaded");
     }
     return this.metadata;
   }
@@ -251,7 +266,7 @@ function getActionErrorsMetadata(
             description: doc
               ?.flatMap(({ description }) => (description ? [description] : []))
               .join("\n"),
-            code: codeType.getLiteralValue()?.toString() ?? '500',
+            code: codeType.getLiteralValue()?.toString() ?? "500",
             payloadType,
           },
         ];
