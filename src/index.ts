@@ -24,8 +24,8 @@ import {
   schema as openapiSpecsSchema,
 } from "./config/openapi-specs";
 import { createHttpError } from "./error";
-import ErrorMiddleware from "./middleware/error-middleware";
-import JSONParserMiddleware from "./middleware/json-parser-middleware";
+import { ErrorMiddleware } from "./middleware/error-middleware";
+import { JSONParserMiddleware } from "./middleware/json-parser-middleware";
 import { ActionMetadata, MetadataManager } from "./service/metadata-manager";
 import { Validator } from "./service/validator";
 import {
@@ -37,7 +37,7 @@ import {
   RestAPIPreValidateResponseEvent,
 } from "./events";
 import { GenerateSchemaProcess } from "./process/generate-schema-process";
-import SchemaMiddleware from "./middleware/schema-middleware";
+import { SchemaMiddleware } from "./middleware/schema-middleware";
 import { GenerateSchemaTask } from "./task/generate-schema-task";
 
 class AlliageRestAPIModule extends AbstractLifeCycleAwareModule {
@@ -100,32 +100,35 @@ class AlliageRestAPIModule extends AbstractLifeCycleAwareModule {
     if (
       corsConfigs &&
       reqOrigin &&
-      request.getMethod() === HTTP_METHOD.OPTIONS &&
-      (request.getHeader("Access-Control-Request-Method") ||
-        request.getHeader("Access-Control-Request-Headers"))
+      ((request.getMethod() === HTTP_METHOD.OPTIONS &&
+        (request.getHeader("Access-Control-Request-Method") !== undefined ||
+          request.getHeader("Access-Control-Request-Headers") !== undefined)) ||
+        request.getMethod() === HTTP_METHOD.GET)
     ) {
       const originCorsConfig = corsConfigs.find(
         ({ origin }) => origin === reqOrigin
       );
       if (originCorsConfig) {
-        response.setStatus(204);
         response.setHeader(
           "Access-Control-Allow-Origin",
           originCorsConfig.origin
         );
-        response.setHeader(
-          "Access-Control-Allow-Headers",
-          originCorsConfig.headers?.join(", ") ?? ""
-        );
-        response.setHeader(
-          "Access-Control-Allow-Methods",
-          originCorsConfig.methods?.join(", ") ?? ""
-        );
-        response.setHeader(
-          "Access-Control-Max-Age",
-          originCorsConfig.maxAge?.toString() ?? ""
-        );
-        response.end();
+        if (request.getMethod() === HTTP_METHOD.OPTIONS) {
+          response.setHeader(
+            "Access-Control-Allow-Headers",
+            originCorsConfig.headers?.join(", ") ?? ""
+          );
+          response.setHeader(
+            "Access-Control-Allow-Methods",
+            originCorsConfig.methods?.join(", ") ?? ""
+          );
+          response.setHeader(
+            "Access-Control-Max-Age",
+            originCorsConfig.maxAge?.toString() ?? ""
+          );
+          response.setStatus(204);
+          response.end();
+        }
       }
     }
   };
@@ -133,7 +136,7 @@ class AlliageRestAPIModule extends AbstractLifeCycleAwareModule {
   /**
    * Handles request validation
    */
-  handlePreController = (event: AdapterPreControllerEvent) => {
+  handlePreController = async (event: AdapterPreControllerEvent) => {
     if (!this.config.validation.requests.enable) {
       return;
     }
@@ -149,7 +152,7 @@ class AlliageRestAPIModule extends AbstractLifeCycleAwareModule {
       metadata,
       request
     );
-    this.eventManager.emit(
+    await this.eventManager.emit(
       preValidateRequestEvent.getType(),
       preValidateRequestEvent
     );
@@ -160,7 +163,7 @@ class AlliageRestAPIModule extends AbstractLifeCycleAwareModule {
         request,
         errors
       );
-      this.eventManager.emit(
+      await this.eventManager.emit(
         invalidRequestEvent.getType(),
         invalidRequestEvent
       );
@@ -170,7 +173,7 @@ class AlliageRestAPIModule extends AbstractLifeCycleAwareModule {
       metadata,
       request
     );
-    this.eventManager.emit(
+    await this.eventManager.emit(
       postValidateRequestEvent.getType(),
       postValidateRequestEvent
     );
@@ -179,7 +182,7 @@ class AlliageRestAPIModule extends AbstractLifeCycleAwareModule {
   /**
    * Handles response validation + automatic assignation of reponse's body and status code
    */
-  handlePostController = (event: AdapterPostControllerEvent) => {
+  handlePostController = async (event: AdapterPostControllerEvent) => {
     const request = event.getRequest();
     const response = event.getResponse();
     const returnedValue = event.getReturnedValue();
@@ -196,49 +199,47 @@ class AlliageRestAPIModule extends AbstractLifeCycleAwareModule {
 
     response.setStatus(metadata.defaultStatusCode);
 
-    if (!metadata.validateOutput) {
+    if (!this.config.validation.responses.enable || !metadata.validateOutput) {
       return;
     }
 
-    if (this.config.validation.responses.enable) {
-      const preValidateResponseEvent = new RestAPIPreValidateResponseEvent(
+    const preValidateResponseEvent = new RestAPIPreValidateResponseEvent(
+      metadata,
+      response
+    );
+    await this.eventManager.emit(
+      preValidateResponseEvent.getType(),
+      preValidateResponseEvent
+    );
+    const errors = this.validator.validateResponse(metadata, response);
+    if (errors) {
+      const { returnErrors } = this.config.validation.responses.errors;
+      const invalidResponseEvent = new RestAPIInvalidResponseEvent(
         metadata,
-        response
+        response,
+        errors
       );
-      this.eventManager.emit(
-        preValidateResponseEvent.getType(),
-        preValidateResponseEvent
+      await this.eventManager.emit(
+        invalidResponseEvent.getType(),
+        invalidResponseEvent
       );
-      const errors = this.validator.validateResponse(metadata, response);
-      if (errors) {
-        const { returnErrors } = this.config.validation.responses.errors;
-        const invalidResponseEvent = new RestAPIInvalidResponseEvent(
-          metadata,
-          response,
-          errors
+      // @TODO log error
+      if (returnErrors) {
+        throw createHttpError(
+          this.config.validation.responses.errors.statusCode,
+          invalidResponseEvent.getErrors()
         );
-        this.eventManager.emit(
-          invalidResponseEvent.getType(),
-          invalidResponseEvent
-        );
-        // @TODO log error
-        if (returnErrors) {
-          throw createHttpError(
-            this.config.validation.responses.errors.statusCode,
-            invalidResponseEvent.getErrors()
-          );
-        }
       }
-
-      const postValidateResponseEvent = new RestAPIPostValidateResponseEvent(
-        metadata,
-        response
-      );
-      this.eventManager.emit(
-        postValidateResponseEvent.getType(),
-        postValidateResponseEvent
-      );
     }
+
+    const postValidateResponseEvent = new RestAPIPostValidateResponseEvent(
+      metadata,
+      response
+    );
+    await this.eventManager.emit(
+      postValidateResponseEvent.getType(),
+      postValidateResponseEvent
+    );
 
     // We delete the metadata corresponding to
     // the current request

@@ -6,14 +6,14 @@ import { Context } from "alliage-webserver/middleware/context";
 import { RestAPIPostErrorEvent, RestAPIPreErrorEvent } from "../events";
 import { HttpError } from "../error";
 
-export default class ErrorMiddleware extends AbstractMiddleware {
+export class ErrorMiddleware extends AbstractMiddleware {
   constructor(private eventManager: EventManager, private env: string) {
     super();
   }
 
   getRequestPhase = () => REQUEST_PHASE.POST_CONTROLLER;
 
-  apply(context: Context, error: Error) {
+  async apply(context: Context, error: Error) {
     const request = context.getRequest();
     const response = context.getResponse();
 
@@ -35,7 +35,7 @@ export default class ErrorMiddleware extends AbstractMiddleware {
                 : undefined,
           }
     );
-    this.eventManager.emit(preErrorEvent.getType(), preErrorEvent);
+    await this.eventManager.emit(preErrorEvent.getType(), preErrorEvent);
 
     const code = preErrorEvent.getCode();
     const body = preErrorEvent.getBody();
@@ -49,6 +49,6 @@ export default class ErrorMiddleware extends AbstractMiddleware {
       code,
       body
     );
-    this.eventManager.emit(postErrorEvent.getType(), postErrorEvent);
+    await this.eventManager.emit(postErrorEvent.getType(), postErrorEvent);
   }
 }

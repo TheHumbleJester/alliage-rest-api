@@ -100,11 +100,14 @@ export class Validator {
    * @param response response to validate
    * @returns
    */
-  validateResponse(metadata: ActionMetadata, response: AbstractResponse) {
+  validateResponse(
+    metadata: ActionMetadata,
+    response: AbstractResponse
+  ): ValidationErrors[] | undefined {
     const { response: responseValidator } = this.getActionValidators(metadata);
 
     const errors = [];
-    if (responseValidator.body(response.getBody())) {
+    if (!responseValidator.body(response.getBody())) {
       errors.push({
         source: ERROR_SOURCE.BODY,
         errors: responseValidator.body.errors,

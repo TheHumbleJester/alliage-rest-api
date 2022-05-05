@@ -124,7 +124,6 @@ Object {
               "type": "string",
             },
           },
-          "required": Array [],
           "type": "object",
         },
         "returnType": Object {
@@ -140,7 +139,7 @@ Object {
           "type": "object",
         },
         "validateInput": true,
-        "validateOutput": false,
+        "validateOutput": true,
       },
       "path": "/api/hello/:name",
       "pattern": "/^\\\\/api\\\\/hello(?:\\\\/([^\\\\/#\\\\?]+?))[\\\\/#\\\\?]?$/i",
@@ -194,7 +193,6 @@ Object {
               "type": "string",
             },
           },
-          "required": Array [],
           "type": "object",
         },
         "returnType": Object {
@@ -210,7 +208,7 @@ Object {
           "type": "object",
         },
         "validateInput": true,
-        "validateOutput": false,
+        "validateOutput": true,
       },
       "path": "/api/hello/:name",
       "pattern": "/^\\\\/api\\\\/hello(?:\\\\/([^\\\\/#\\\\?]+?))[\\\\/#\\\\?]?$/i",

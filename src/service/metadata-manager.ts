@@ -6,6 +6,7 @@ import { pathToRegexp } from "path-to-regexp";
 import {
   ClassDeclaration,
   Decorator,
+  DefinitionInfo,
   LanguageService,
   MethodDeclaration,
   Node,
@@ -15,7 +16,7 @@ import {
   ts,
 } from "ts-morph";
 
-import { convertTypeToJsonSchema } from "../utils/json-schema";
+import { convertTypeToJsonSchema, getFileData } from "../utils/json-schema";
 
 const PATTERN_REGEXP = /^\/(.*)\/([dgimsuy]+)$/;
 
@@ -44,7 +45,8 @@ export class MetadataManager {
     private env: string,
     private sources: string[],
     private metadataPath: string,
-    private disableMetadataGeneration: boolean
+    private disableMetadataGeneration: boolean,
+    private tsConfigPath: string = "./tsconfig.json"
   ) {}
 
   /**
@@ -72,7 +74,7 @@ export class MetadataManager {
    */
   async generateMetadata() {
     const project = new Project({
-      tsConfigFilePath: path.resolve("./tsconfig.json"),
+      tsConfigFilePath: path.resolve(this.tsConfigPath),
     });
 
     const files = project.getSourceFiles(this.sources);
@@ -107,7 +109,11 @@ export class MetadataManager {
    * @param path Path of the request
    */
   findMetadata(method: string, path: string): ActionMetadata | undefined {
-    return this.metadata?.[method.toLowerCase()]?.find((m) => {
+    if (!this.metadata) {
+      throw new Error("Controllers metadata is not loaded");
+    }
+
+    return this.metadata[method.toLowerCase()]?.find((m) => {
       const match = PATTERN_REGEXP.exec(m.pattern);
       if (!match) {
         return false;
@@ -129,6 +135,18 @@ export class MetadataManager {
   }
 }
 
+/* istanbul ignore next */
+const ALLIAGE_WEB_MODULE_PATH =
+  process.env.__ALLIAGE_WEB_MODULE_PATH__ ?? "/node_modules/alliage-webserver";
+/* istanbul ignore next */
+const ALLIAGE_REST_API_MODULE_PATH =
+  process.env.__ALLIAGE_REST_API_MODULE_PATH__ ??
+  "/node_modules/alliage-rest-api";
+
+function PREPEND_PATTERN(prefix: string, pattern: RegExp) {
+  return new RegExp(`${prefix}${pattern.source}`, pattern.flags);
+}
+
 function getRootClass(
   cd: ClassDeclaration,
   languageService: LanguageService
@@ -140,11 +158,16 @@ function getRootClass(
   }
 
   // Get the symbol and the definition of that "extends" expression
-  const defs = languageService.getDefinitions(ce);
-  const ceSymbol = ce.getType().getSymbol();
-  if (defs.length === 0 || !ceSymbol) {
+  let defs: DefinitionInfo<ts.DefinitionInfo>[] = [];
+  try {
+    defs = languageService.getDefinitions(ce);
+  } catch {
     return cd;
   }
+  if (defs.length === 0) {
+    return cd;
+  }
+  const ceSymbol = ce.getType().getSymbolOrThrow();
 
   // Find the class declaration corresponding to that symbol
   const parentClass = defs[0].getSourceFile().getClass(ceSymbol.getName());
@@ -156,8 +179,10 @@ function getRootClass(
 }
 
 const ABSTRACT_CONTROLLER_NAME = "AbstractController";
-const ABSTRACT_CONTROLLER_PATH_REGEXP =
-  /\/node_modules\/alliage-webserver\/controller\/index\.d\.ts$/;
+const ABSTRACT_CONTROLLER_PATH_REGEXP = PREPEND_PATTERN(
+  ALLIAGE_WEB_MODULE_PATH,
+  /\/controller\/index(\.d)?\.ts$/
+);
 
 function isAbstractController(classDecl: ClassDeclaration) {
   return (
@@ -169,12 +194,14 @@ function isAbstractController(classDecl: ClassDeclaration) {
 }
 
 const ABSTRACT_REQUEST_NAME = "AbstractRequest";
-const ABSTRACT_REQUEST_PATH_REGEXP =
-  /\/node_modules\/alliage-webserver\/http\/request\.d\.ts$/;
+const ABSTRACT_REQUEST_PATH_REGEXP = PREPEND_PATTERN(
+  ALLIAGE_WEB_MODULE_PATH,
+  /\/http\/request(\.d)?\.ts$/
+);
 
 function isAbstractRequest(node: Node<ts.Node>) {
-  const symbol = node.getType().getSymbol();
-  return symbol?.getDeclarations().some((decl) => {
+  const symbol = node.getType().getSymbolOrThrow();
+  return symbol.getDeclarations().some((decl) => {
     const classDecl = decl.asKind(ts.SyntaxKind.ClassDeclaration);
     return (
       classDecl &&
@@ -184,23 +211,22 @@ function isAbstractRequest(node: Node<ts.Node>) {
   });
 }
 
-const DECORATORS_PATH_REGEXP =
-  /\/node_modules\/alliage-webserver\/controller\/decorations\.d\.ts$/;
+const DECORATORS_PATH_REGEXP = PREPEND_PATTERN(
+  ALLIAGE_WEB_MODULE_PATH,
+  /\/controller\/decorations(\.d)?\.ts$/
+);
 const ALLOWED_DECORATORS_ARGUMENT_KINDS = [
   SyntaxKind.StringLiteral,
   SyntaxKind.NoSubstitutionTemplateLiteral,
 ];
 
 function getActionDecoratorMetadata(decorator: Decorator) {
-  const callExpression = decorator.getCallExpression();
-  if (!callExpression) {
-    return undefined;
-  }
+  const callExpression = decorator.getCallExpressionOrThrow();
 
   const originalDef = callExpression
     .getExpression()
-    .asKind(ts.SyntaxKind.Identifier)
-    ?.getDefinitions()
+    .asKindOrThrow(ts.SyntaxKind.Identifier)
+    .getDefinitions()
     .find((def) => {
       return DECORATORS_PATH_REGEXP.test(def.getSourceFile().getFilePath());
     });
@@ -220,15 +246,17 @@ function getActionDecoratorMetadata(decorator: Decorator) {
 }
 
 const HTTP_ERROR_NAME = "HttpError";
-const HTTP_ERROR_PATH_REGEXP =
-  /\/node_modules\/alliage-rest-api\/error\/index\.d\.ts$/;
+const HTTP_ERROR_PATH_REGEXP = PREPEND_PATTERN(
+  ALLIAGE_REST_API_MODULE_PATH,
+  /\/error(\.d)?\.ts$/
+);
 function getActionErrorsMetadata(
   methodDecl: MethodDeclaration,
   languageService: LanguageService
 ) {
   return methodDecl
-    .getBody()
-    ?.getDescendantsOfKind(ts.SyntaxKind.ThrowStatement)
+    .getBodyOrThrow()
+    .getDescendantsOfKind(ts.SyntaxKind.ThrowStatement)
     .flatMap((throwStatement) => {
       const comments = throwStatement.getLeadingCommentRanges();
       const doc =
@@ -236,9 +264,11 @@ function getActionErrorsMetadata(
           ? parse(comments[comments.length - 1].getText())
           : undefined;
       const symbol = throwStatement.getExpression().getType().getSymbol();
+
       if (!symbol) {
         return [];
       }
+
       return symbol.getDeclarations().flatMap((d) => {
         const cd = d.asKind(ts.SyntaxKind.ClassDeclaration);
         if (!cd) {
@@ -247,6 +277,7 @@ function getActionErrorsMetadata(
         }
 
         const rcd = getRootClass(cd, languageService);
+
         if (
           rcd.getName() !== HTTP_ERROR_NAME ||
           !HTTP_ERROR_PATH_REGEXP.test(rcd.getSourceFile().getFilePath())
@@ -263,9 +294,7 @@ function getActionErrorsMetadata(
 
         return [
           {
-            description: doc
-              ?.flatMap(({ description }) => (description ? [description] : []))
-              .join("\n"),
+            description: doc?.map(({ description }) => description).join("\n"),
             code: codeType.getLiteralValue()?.toString() ?? "500",
             payloadType,
           },
@@ -275,8 +304,8 @@ function getActionErrorsMetadata(
 }
 
 function getActionDefaultStatusCode(methodDecl: MethodDeclaration) {
-  const tags = methodDecl.getSymbol()?.getJsDocTags();
-  const scTag = tags?.find((t) => t.getName() === "defaultStatusCode");
+  const tags = methodDecl.getSymbolOrThrow().getJsDocTags();
+  const scTag = tags.find((t) => t.getName() === "defaultStatusCode");
 
   let statusCode = 200;
   if (scTag) {
@@ -293,8 +322,8 @@ function getActionDefaultStatusCode(methodDecl: MethodDeclaration) {
 }
 
 function getActionValidateInputFlag(methodDecl: MethodDeclaration) {
-  const tags = methodDecl.getSymbol()?.getJsDocTags();
-  const viTag = tags?.find((t) => t.getName() === "validateInput");
+  const tags = methodDecl.getSymbolOrThrow().getJsDocTags();
+  const viTag = tags.find((t) => t.getName() === "validateInput");
 
   return viTag
     ?.getText()
@@ -305,15 +334,15 @@ function getActionValidateInputFlag(methodDecl: MethodDeclaration) {
 }
 
 function getActionValidateOutputFlag(methodDecl: MethodDeclaration) {
-  const tags = methodDecl.getSymbol()?.getJsDocTags();
-  const viTag = tags?.find((t) => t.getName() === "validateOutput");
+  const tags = methodDecl.getSymbolOrThrow().getJsDocTags();
+  const viTag = tags.find((t) => t.getName() === "validateOutput");
 
   return viTag
     ?.getText()
     .map((t) => t.text)
-    .join("") === "true"
-    ? true
-    : false;
+    .join("") === "false"
+    ? false
+    : true;
 }
 
 export function getControllerMetadata(file: SourceFile) {
@@ -340,10 +369,7 @@ export function getControllerMetadata(file: SourceFile) {
   // Gets all the controller's actions with their routes
   const actions = classDecl.getMethods().flatMap((methodDecl) => {
     const params = methodDecl.getParameters();
-    // If its first argument is not an AbstractRequest
-    if (params.length === 0 || !isAbstractRequest(params[0])) {
-      return [];
-    }
+    const paramDeclaration = params[0];
 
     const routes = methodDecl.getDecorators().flatMap((decorator) => {
       const data = getActionDecoratorMetadata(decorator);
@@ -355,17 +381,14 @@ export function getControllerMetadata(file: SourceFile) {
       return [];
     }
 
-    const [paramsType, queryType, bodyType] = params[0]
-      .getType()
-      .getTypeArguments();
+    const [paramsType, queryType, bodyType] =
+      params.length > 0 && isAbstractRequest(paramDeclaration)
+        ? paramDeclaration.getType().getTypeArguments()
+        : [null, null, null];
 
     const returnType = methodDecl.getReturnType();
-    // If it doesn't return a promise
-    if (returnType.getSymbol()?.getName() !== "Promise") {
-      return [];
-    }
 
-    const errors = getActionErrorsMetadata(methodDecl, languageService) ?? [];
+    const errors = getActionErrorsMetadata(methodDecl, languageService);
 
     const defaultStatusCode = getActionDefaultStatusCode(methodDecl);
     const validateInput = getActionValidateInputFlag(methodDecl);
@@ -378,15 +401,37 @@ export function getControllerMetadata(file: SourceFile) {
         validateInput,
         validateOutput,
         routes,
-        paramsType: convertTypeToJsonSchema(paramsType),
-        queryType: convertTypeToJsonSchema(queryType),
-        bodyType: convertTypeToJsonSchema(bodyType),
-        returnType: convertTypeToJsonSchema(
-          methodDecl.getReturnType().getTypeArguments()[0]
-        ),
+        paramsType: paramsType
+          ? convertTypeToJsonSchema(
+              paramsType,
+              getFileData(paramDeclaration.getSymbolOrThrow())
+            )
+          : {},
+        queryType: queryType
+          ? convertTypeToJsonSchema(
+              queryType,
+              getFileData(paramDeclaration.getSymbolOrThrow())
+            )
+          : {},
+        bodyType: bodyType
+          ? convertTypeToJsonSchema(
+              bodyType,
+              getFileData(paramDeclaration.getSymbolOrThrow())
+            )
+          : {},
+        returnType:
+          returnType.getSymbolOrThrow().getName() === "Promise"
+            ? convertTypeToJsonSchema(
+                methodDecl.getReturnType().getTypeArguments()[0],
+                getFileData(methodDecl.getSymbolOrThrow())
+              )
+            : {},
         errors: errors.map(({ payloadType, ...e }) => ({
           ...e,
-          payloadType: convertTypeToJsonSchema(payloadType),
+          payloadType: convertTypeToJsonSchema(
+            payloadType,
+            getFileData(methodDecl.getSymbolOrThrow())
+          ),
         })),
       },
     ];

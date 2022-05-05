@@ -166,5 +166,28 @@ describe("Main scenario", () => {
         },
       ]);
     });
+
+    it("should handle preflight requests", async () => {
+      const res = await webserverSandbox
+        .getClient()
+        .options("/api/hello/John", {
+          headers: {
+            "Access-Control-Request-Method": "",
+            "Access-Control-Request-Headers": "",
+            Origin: "http://acme.com",
+          },
+        });
+
+      expect(res.status).toBe(204);
+      expect(res.headers).toEqual(
+        expect.objectContaining({
+          "access-control-allow-origin": "http://acme.com",
+          "access-control-allow-headers":
+            "X-Custom-Header-1, X-Custom-Header-2",
+          "access-control-allow-methods": "GET, POST, PUT, DELETE",
+          "access-control-max-age": "4800",
+        })
+      );
+    });
   });
 });

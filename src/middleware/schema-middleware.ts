@@ -7,15 +7,14 @@ import {
   RestAPIPostGenerateSchemaEvent,
   RestAPIPreGenerateSchemaEvent,
 } from "../events";
-
-import { Config as OpenApiSpecs } from "config/openapi-specs";
-import { Config } from "config/main";
-import { MetadataManager } from "service/metadata-manager";
+import { Config as OpenApiSpecs } from "../config/openapi-specs";
+import { Config } from "../config/main";
+import { MetadataManager } from "../service/metadata-manager";
 
 /**
  * Exposes the OpenAPI schema endpoint
  */
-export default class SchemaMiddleware extends AbstractMiddleware {
+export class SchemaMiddleware extends AbstractMiddleware {
   private schema: OpenApiSpecs | undefined;
 
   constructor(
@@ -33,7 +32,7 @@ export default class SchemaMiddleware extends AbstractMiddleware {
    * Generates the OpenAPI schema
    * @returns OpenAPI schema
    */
-  private generateSchema() {
+  private async generateSchema() {
     if (this.schema) {
       return this.schema;
     }
@@ -41,21 +40,15 @@ export default class SchemaMiddleware extends AbstractMiddleware {
     const preEvent = new RestAPIPreGenerateSchemaEvent(
       this.metadataManager.getMetadata()
     );
-    this.eventManager.emit(preEvent.getType(), preEvent);
+    await this.eventManager.emit(preEvent.getType(), preEvent);
 
     const metadata = preEvent.getMetadata();
 
     const paths = Object.entries(metadata).reduce(
       (paths, [method, metadata]) => {
         return metadata.reduce((p, { path, actionMetadata }) => {
-          const params =
-            typeof actionMetadata.paramsType !== "boolean"
-              ? actionMetadata.paramsType
-              : {};
-          const query =
-            typeof actionMetadata.queryType !== "boolean"
-              ? actionMetadata.queryType
-              : {};
+          const params = actionMetadata.paramsType;
+          const query = actionMetadata.queryType;
           return {
             ...p,
             [path]: {
@@ -129,17 +122,15 @@ export default class SchemaMiddleware extends AbstractMiddleware {
     };
 
     const postEvent = new RestAPIPostGenerateSchemaEvent(metadata, this.schema);
-    this.eventManager.emit(postEvent.getType(), postEvent);
+    await this.eventManager.emit(postEvent.getType(), postEvent);
     return postEvent.getSchema();
   }
 
   async apply(context: Context) {
-    const request = context.getRequest();
-    if (
-      this.schemaConfig.enable &&
-      request.getPath() === this.schemaConfig.path
-    ) {
-      const schema = this.generateSchema();
+    const requestPath = context.getRequest().getPath();
+
+    if (this.schemaConfig.enable && requestPath === this.schemaConfig.path) {
+      const schema = await this.generateSchema();
       context.getResponse().setStatus(200).setBody(schema).end();
     }
   }

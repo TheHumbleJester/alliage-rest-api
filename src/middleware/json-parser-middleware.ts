@@ -2,10 +2,12 @@ import { REQUEST_PHASE } from "alliage-webserver/adapter";
 import { AbstractMiddleware } from "alliage-webserver/middleware";
 import { Context } from "alliage-webserver/middleware/context";
 
+import { createHttpError } from "../error";
+
 /**
  * Transforms JSON string in the request body in an actual javascript object
  */
-export default class JSONParserMiddleware extends AbstractMiddleware {
+export class JSONParserMiddleware extends AbstractMiddleware {
   getRequestPhase = () => REQUEST_PHASE.PRE_CONTROLLER;
 
   async apply(context: Context) {
@@ -18,7 +20,15 @@ export default class JSONParserMiddleware extends AbstractMiddleware {
         stream.on("end", resolve);
         stream.on("error", reject);
       });
-      request.setBody(JSON.parse(content));
+
+      try {
+        const jsonObject = JSON.parse(content);
+        request.setBody(jsonObject);
+      } catch (error) {
+        throw createHttpError(400, {
+          message: "Invalid JSON",
+        });
+      }
     }
   }
 }
